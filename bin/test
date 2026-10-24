@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+mkdir -p "$ROOT/build/tests"
+cd "$ROOT/build/tests"
+
+qmake6 "$ROOT/tests/sanger_tests.pro"
+make -j"$(nproc)"
+QT_QPA_PLATFORM=offscreen QT_QPA_PLATFORMTHEME=generic ./sanger_tests
+"$ROOT/tools/strings" --check

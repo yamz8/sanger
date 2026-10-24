@@ -1,0 +1,23 @@
+pkgname=sanger
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='View Sanger sequencing traces, trim them, align them to a reference, and export the consensus'
+arch=('x86_64' 'aarch64')
+license=('MIT')
+depends=('qt6-base' 'qt6-declarative' 'qt6-wayland' 'xdg-desktop-portal')
+makedepends=('gcc' 'make')
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/.."
+  ./bin/build
+}
+
+package() {
+  cd "$startdir/.."
+  install -Dm755 build/sanger "$pkgdir/usr/bin/sanger"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$startdir/sanger.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/sanger.svg"
+  install -Dm644 "$startdir/sanger.desktop" "$pkgdir/usr/share/applications/sanger.desktop"
+}

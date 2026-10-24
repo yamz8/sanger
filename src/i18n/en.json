@@ -1,0 +1,30 @@
+{
+  "%n mismatches": {
+    "one": "%n mismatch",
+    "other": "%n mismatches"
+  },
+  "Opened %n traces.": {
+    "one": "Opened %n trace.",
+    "other": "Opened %n traces."
+  },
+  "Reference: %1 (%Ln bases).": {
+    "one": "Reference: %1 (%Ln base).",
+    "other": "Reference: %1 (%Ln bases)."
+  },
+  "%n reads don't match the reference.": {
+    "one": "%n read doesn't match the reference.",
+    "other": "%n reads don't match the reference."
+  },
+  "%1 holds %n sequences; using the first, %2.": {
+    "one": "%1 holds %n sequence; using the first, %2.",
+    "other": "%1 holds %n sequences; using the first, %2."
+  },
+  "Reference %1, %Ln bases": {
+    "one": "Reference %1, %Ln base",
+    "other": "Reference %1, %Ln bases"
+  },
+  "Consensus %Ln bases": {
+    "one": "Consensus %Ln base",
+    "other": "Consensus %Ln bases"
+  }
+}
