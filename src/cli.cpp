@@ -43,8 +43,10 @@ struct Command {
     bool load(Assembly &assembly, bool reference) const {
         bool ok = false;
         const double limit = parser.value("error-limit").toDouble(&ok);
-        if (!ok || limit <= 0 || limit >= 1) {
-            print(stderr, "The error limit must be a rate between 0 and 1, such as 0.05.");
+        if (!ok || limit < Assembly::MinimumErrorLimit || limit > Assembly::MaximumErrorLimit) {
+            print(stderr, QString("The error limit must be a rate from %1 to %2, such as 0.05.")
+                              .arg(Assembly::MinimumErrorLimit)
+                              .arg(Assembly::MaximumErrorLimit));
             return false;
         }
         assembly.setErrorLimit(limit);
@@ -109,8 +111,8 @@ QJsonObject readJson(const Assembly &assembly, int index) {
         {"format", read.original.format},
         {"sample", read.original.sample},
         {"length", read.original.length()},
-        {"trimStart", read.reverse ? read.trace.length() - read.trim.end + 1 : read.trim.start + 1},
-        {"trimEnd", read.reverse ? read.trace.length() - read.trim.start : read.trim.end},
+        {"trimStart", read.sequencedTrim().start},
+        {"trimEnd", read.sequencedTrim().end},
         {"trimmedLength", read.trim.length()},
         {"meanQuality", read.trace.hasQuality ? QJsonValue(read.trace.meanQuality(read.trim.start, read.trim.end))
                                               : QJsonValue()},
@@ -143,13 +145,14 @@ int info(const QStringList &arguments) {
         const QJsonObject object = readJson(assembly, i);
         list << object;
         if (!command.isJson())
+            // One arg() call for every field, so a %3 in a file name stays as it is.
             print(stdout, QString("%1  %2  %3 bases, trimmed to %4-%5 (%6 bases)%7")
-                              .arg(object["name"].toString(), object["format"].toString())
-                              .arg(object["length"].toInt())
-                              .arg(object["trimStart"].toInt())
-                              .arg(object["trimEnd"].toInt())
-                              .arg(object["trimmedLength"].toInt())
-                              .arg(object["meanQuality"].isNull()
+                              .arg(object["name"].toString(), object["format"].toString(),
+                                   QString::number(object["length"].toInt()),
+                                   QString::number(object["trimStart"].toInt()),
+                                   QString::number(object["trimEnd"].toInt()),
+                                   QString::number(object["trimmedLength"].toInt()),
+                                   object["meanQuality"].isNull()
                                        ? QString(", no qualities")
                                        : QString(", mean Q%1").arg(object["meanQuality"].toDouble(), 0, 'f', 1)));
     }
@@ -217,11 +220,11 @@ int align(const QStringList &arguments) {
             print(stdout, object["name"].toString() + "  does not match the reference");
         else
             print(stdout, QString("%1  %2  reference %3-%4  %5 identity, %6 differences")
-                              .arg(object["name"].toString(), object["strand"].toString())
-                              .arg(object["referenceStart"].toInt())
-                              .arg(object["referenceEnd"].toInt())
-                              .arg(percent(object["identity"].toDouble()))
-                              .arg(object["differences"].toInt()));
+                              .arg(object["name"].toString(), object["strand"].toString(),
+                                   QString::number(object["referenceStart"].toInt()),
+                                   QString::number(object["referenceEnd"].toInt()),
+                                   percent(object["identity"].toDouble()),
+                                   QString::number(object["differences"].toInt())));
     }
 
     QJsonArray mismatches;

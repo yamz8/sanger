@@ -39,7 +39,6 @@ constexpr int Clip = -10;
 constexpr int Negative = -1'000'000'000 / 2;
 // The cells one full alignment may use before the reference is windowed.
 constexpr qint64 CellLimit = 24'000'000;
-constexpr int NoStart = std::numeric_limits<int>::min();
 
 int score(char a, char b) {
     const int ma = mask(a), mb = mask(b);
@@ -50,43 +49,56 @@ int score(char a, char b) {
     return (ma & mb) ? Ambiguous : Mismatch;
 }
 
-// The reference offset where the read most likely starts, from the diagonal
-// the most shared 12-mers fall on, or NoStart when they share none.
-int likelyStart(const QByteArray &read, const QByteArray &reference) {
-    constexpr int K = 12;
+constexpr int K = 12;
+constexpr int Bucket = 32;
+
+// Calls visit(word, offset) for every 12-mer of plain bases in the sequence.
+template <typename Visit>
+void kmers(const QByteArray &sequence, Visit visit) {
     auto code = [](char c) { return c == 'A' ? 0 : c == 'C' ? 1 : c == 'G' ? 2 : c == 'T' ? 3 : -1; };
-    auto kmers = [&](const QByteArray &sequence, auto visit) {
-        quint32 word = 0;
-        int valid = 0;
-        for (int i = 0; i < sequence.size(); ++i) {
-            const int c = code(sequence[i]);
-            if (c < 0) {
-                valid = 0;
-                continue;
-            }
-            word = ((word << 2) | quint32(c)) & ((1u << (2 * K)) - 1);
-            if (++valid >= K)
-                visit(word, i - K + 1);
+    quint32 word = 0;
+    int valid = 0;
+    for (int i = 0; i < sequence.size(); ++i) {
+        const int c = code(sequence[i]);
+        if (c < 0) {
+            valid = 0;
+            continue;
         }
-    };
-    QHash<quint32, QVector<int>> index;
-    kmers(reference, [&](quint32 word, int at) { index[word] << at; });
+        word = ((word << 2) | quint32(c)) & ((1u << (2 * K)) - 1);
+        if (++valid >= K)
+            visit(word, i - K + 1);
+    }
+}
+
+// Rounds toward minus infinity, so a read overhanging the reference's start
+// lands in its own bucket rather than sharing bucket 0 with offsets 0 to 31.
+int floorDivide(int value, int divisor) { return value >= 0 ? value / divisor : -((-value + divisor - 1) / divisor); }
+}
+
+ReferenceIndex::ReferenceIndex(const QByteArray &reference) {
+    kmers(reference, [&](quint32 word, int at) { m_positions[word] << at; });
+}
+
+int ReferenceIndex::likelyStart(const QByteArray &read) const {
     QHash<int, int> votes;
     kmers(read, [&](quint32 word, int at) {
-        const auto hits = index.constFind(word);
+        const auto hits = m_positions.constFind(word);
         // A k-mer found all over the reference says nothing about where.
-        if (hits != index.cend() && hits->size() <= 8)
+        if (hits != m_positions.cend() && hits->size() <= 8)
             for (int position : *hits)
-                ++votes[(position - at) / 32];
+                ++votes[floorDivide(position - at, Bucket)];
     });
-    int best = -1, bestVotes = 0;
+    int best = 0, bestVotes = 0;
     for (auto it = votes.cbegin(); it != votes.cend(); ++it)
         if (it.value() > bestVotes) {
             bestVotes = it.value();
             best = it.key();
         }
-    return bestVotes >= 3 ? best * 32 : NoStart;
+    return bestVotes >= 3 ? best * Bucket : NoStart;
 }
+
+bool ReferenceIndex::needed(int readLength, int referenceLength) {
+    return qint64(readLength) * referenceLength > CellLimit;
 }
 
 bool Sequence::isBase(char base) { return mask(base) != 0; }
@@ -148,7 +160,7 @@ QByteArray Sequence::formatFasta(const QString &header, const QByteArray &sequen
     return text;
 }
 
-PairwiseAlignment alignToReference(const QByteArray &read, const QByteArray &reference) {
+PairwiseAlignment alignToReference(const QByteArray &read, const QByteArray &reference, const ReferenceIndex *index) {
     PairwiseAlignment result;
     result.refOfBase = QVector<int>(read.size(), PairwiseAlignment::Outside);
     if (read.isEmpty() || reference.isEmpty())
@@ -156,9 +168,9 @@ PairwiseAlignment alignToReference(const QByteArray &read, const QByteArray &ref
 
     int offset = 0;
     QByteArray target = reference;
-    if (qint64(read.size()) * reference.size() > CellLimit) {
-        const int start = likelyStart(read, reference);
-        if (start == NoStart)
+    if (ReferenceIndex::needed(read.size(), reference.size())) {
+        const int start = index ? index->likelyStart(read) : ReferenceIndex(reference).likelyStart(read);
+        if (start == ReferenceIndex::NoStart)
             return result;
         const int margin = 200 + read.size() / 5;
         offset = std::clamp(start - margin, 0, int(reference.size()));

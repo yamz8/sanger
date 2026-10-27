@@ -52,7 +52,9 @@ inline void putU16(QByteArray &data, quint16 value) {
 }
 
 // ABIF with the tags Sanger reads, channels in the common "GATC" dye order.
-inline QByteArray abif(const Trace &trace, const QByteArray &sample = "SAMPLE-1") {
+// With editedCalls, the trace's calls go in as set 1 and editedCalls as PBAS 2
+// alone, as an editor that changes calls without moving peaks would write.
+inline QByteArray abif(const Trace &trace, const QByteArray &sample = "SAMPLE-1", const QByteArray &editedCalls = {}) {
     struct Entry {
         QByteArray name;
         int number;
@@ -69,13 +71,16 @@ inline QByteArray abif(const Trace &trace, const QByteArray &sample = "SAMPLE-1"
     QByteArray quality;
     for (int q : trace.quality)
         quality += char(q);
+    const int set = editedCalls.isEmpty() ? 2 : 1;
     QVector<Entry> entries{
-        {"PBAS", 2, 2, 1, quint32(trace.bases.size()), trace.bases},
-        {"PLOC", 2, 4, 2, quint32(trace.peaks.size()), shorts(trace.peaks)},
-        {"PCON", 2, 2, 1, quint32(quality.size()), quality},
+        {"PBAS", set, 2, 1, quint32(trace.bases.size()), trace.bases},
+        {"PLOC", set, 4, 2, quint32(trace.peaks.size()), shorts(trace.peaks)},
+        {"PCON", set, 2, 1, quint32(quality.size()), quality},
         {"FWO_", 1, 2, 1, 4, "GATC"},
         {"SMPL", 1, 18, 1, quint32(sample.size() + 1), char(sample.size()) + sample},
     };
+    if (!editedCalls.isEmpty())
+        entries << Entry{"PBAS", 2, 2, 1, quint32(editedCalls.size()), editedCalls};
     const QByteArray order = "GATC";
     for (int i = 0; i < 4; ++i) {
         const auto &channel = trace.channels[QByteArray("ACGT").indexOf(order[i])];

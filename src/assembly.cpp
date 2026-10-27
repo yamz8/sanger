@@ -32,6 +32,7 @@ bool disagrees(char symbol, char reference) {
 
 void Assembly::setReference(const Sequence::Record &reference) {
     m_reference = reference;
+    m_index.reset();
     for (Read &read : m_reads) {
         orient(read);
         retrim(read);
@@ -50,7 +51,7 @@ int Assembly::addTrace(const Trace &trace) {
 }
 
 void Assembly::setErrorLimit(double limit) {
-    m_errorLimit = std::clamp(limit, 0.0001, 0.5);
+    m_errorLimit = std::clamp(limit, MinimumErrorLimit, MaximumErrorLimit);
     for (Read &read : m_reads)
         retrim(read);
     rebuild();
@@ -104,15 +105,17 @@ void Assembly::restore(double errorLimit, const QVector<ReadChoices> &choices) {
 
 // Sequencing reads either strand, so try the read both ways round and keep
 // whichever lies on the reference better.
-void Assembly::orient(Read &read) const {
+void Assembly::orient(Read &read) {
     read.reverse = false;
     read.trace = read.original;
     read.alignment = {};
     if (!hasReference())
         return;
-    const PairwiseAlignment forward = alignToReference(read.original.bases, m_reference.sequence);
+    if (!m_index && ReferenceIndex::needed(read.original.length(), m_reference.sequence.size()))
+        m_index = std::make_shared<ReferenceIndex>(m_reference.sequence);
+    const PairwiseAlignment forward = alignToReference(read.original.bases, m_reference.sequence, m_index.get());
     const Trace flipped = read.original.reverseComplemented();
-    const PairwiseAlignment backward = alignToReference(flipped.bases, m_reference.sequence);
+    const PairwiseAlignment backward = alignToReference(flipped.bases, m_reference.sequence, m_index.get());
     const bool useBackward = backward.found && (!forward.found || backward.score > forward.score);
     const PairwiseAlignment &best = useBackward ? backward : forward;
     if (useBackward) {
@@ -173,7 +176,9 @@ void Assembly::rebuild() {
 
     // Where each read's trimmed bases land: one base (or none) per reference
     // position, plus the runs it inserts after a position. Insertions are
-    // kept only between two placed bases, never hanging off an end.
+    // kept only between two placed bases, never hanging off an end. A left-out
+    // read's insertions still get columns, so its row shows what it says; the
+    // included reads read as gaps there, which agree with the reference.
     struct Placement {
         int first = -1, last = -1;
         QVector<int> baseOfRef;
@@ -203,8 +208,7 @@ void Assembly::rebuild() {
                 pending << b;
             }
         }
-        if (read.included)
-            for (auto it = place.inserts.cbegin(); it != place.inserts.cend(); ++it)
+        for (auto it = place.inserts.cbegin(); it != place.inserts.cend(); ++it)
                 widest[it.key()] = std::max(widest[it.key()], int(it.value().size()));
     }
 
