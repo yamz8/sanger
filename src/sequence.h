@@ -1,8 +1,10 @@
 #pragma once
 
 #include <QByteArray>
+#include <QHash>
 #include <QString>
 #include <QVector>
+#include <limits>
 
 namespace Sequence {
 // IUPAC nucleotide codes, so references with ambiguities compare sensibly.
@@ -37,8 +39,26 @@ struct PairwiseAlignment {
     double identity() const { return columns ? double(matches) / columns : 0; }
 };
 
+// Where reads start on a long reference, from the 12-mers they share. Built
+// once per reference, since building it costs far more than one lookup.
+class ReferenceIndex {
+public:
+    static constexpr int NoStart = std::numeric_limits<int>::min();
+
+    explicit ReferenceIndex(const QByteArray &reference);
+    // The reference offset the read most likely starts at, or NoStart.
+    int likelyStart(const QByteArray &read) const;
+    // Whether aligning a read this long to a reference this long needs the
+    // index to narrow the reference first.
+    static bool needed(int readLength, int referenceLength);
+
+private:
+    QHash<quint32, QVector<int>> m_positions;
+};
+
 // Affine gaps (Gotoh), free end gaps so a read may overhang either end of the
 // reference, and a read's ends clipped for a fixed cost where they stop
 // matching inside it. Long references are cut down to the window around the
-// read's best k-mer diagonal first.
-PairwiseAlignment alignToReference(const QByteArray &read, const QByteArray &reference);
+// read's best k-mer diagonal first, from the index when one is given.
+PairwiseAlignment alignToReference(const QByteArray &read, const QByteArray &reference,
+                                   const ReferenceIndex *index = nullptr);

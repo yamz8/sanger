@@ -92,10 +92,6 @@ Trace parseAbif(const QByteArray &data, QString *error) {
         else if (fits(data, u32(data, at + 20), size))
             payloads.insert({name, number}, data.mid(u32(data, at + 20), size));
     }
-    // The edited calls (2) when there are any, else what the basecaller made (1).
-    auto tag = [&](const char *name, int preferred, int fallback) {
-        return payloads.value({name, preferred}, payloads.value({name, fallback}));
-    };
     auto shorts = [](const QByteArray &bytes, bool isSigned) {
         QVector<int> values(bytes.size() / 2);
         for (int i = 0; i < values.size(); ++i)
@@ -103,9 +99,17 @@ Trace parseAbif(const QByteArray &data, QString *error) {
         return values;
     };
 
-    trace.bases = tag("PBAS", 2, 1);
-    trace.peaks = shorts(tag("PLOC", 2, 1), false);
-    const QByteArray quality = tag("PCON", 2, 1);
+    // The edited calls (2) when there are any, else what the basecaller made
+    // (1). Calls, peaks, and qualities come as a set from one or the other: an
+    // editor can write new calls without new peaks, and mixing the sets puts
+    // calls on the wrong peaks.
+    int set = 1;
+    if (payloads.contains({"PBAS", 2}) && payloads.contains({"PLOC", 2}) &&
+        payloads.value({"PLOC", 2}).size() == 2 * payloads.value({"PBAS", 2}).size())
+        set = 2;
+    trace.bases = payloads.value({"PBAS", set});
+    trace.peaks = shorts(payloads.value({"PLOC", set}), false);
+    const QByteArray quality = payloads.value({"PCON", set});
     // Old basecallers (the 310's, for one) write the block but leave it zero.
     if (quality.size() == trace.bases.size() && quality.count('\0') < quality.size()) {
         trace.hasQuality = true;

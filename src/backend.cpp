@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QLocale>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <algorithm>
 
@@ -34,8 +35,8 @@ QVariantList Backend::reads() const {
             {"sample", read.original.sample},
             {"format", read.original.format},
             {"length", read.trace.length()},
-            {"trimStart", read.trim.start + 1},
-            {"trimEnd", read.trim.end},
+            {"trimStart", read.sequencedTrim().start},
+            {"trimEnd", read.sequencedTrim().end},
             {"trimmedLength", read.trim.length()},
             {"meanQuality", read.trace.hasQuality ? read.trace.meanQuality(read.trim.start, read.trim.end) : -1.0},
             {"reverse", read.reverse},
@@ -126,7 +127,12 @@ void Backend::exportFasta() {
         return;
     }
     const QString folder = m_lastFolder.isEmpty() ? QDir::homePath() : m_lastFolder;
-    const QString name = hasReference() ? referenceName() + "_consensus.fasta" : QStringLiteral("trimmed_reads.fasta");
+    // A FASTA name can hold anything, but the suggestion must stay one file
+    // in the folder.
+    QString reference = referenceName();
+    static const QRegularExpression unsafe(R"([/\\:*?"<>|\x00-\x1f])");
+    reference.replace(unsafe, "_");
+    const QString name = hasReference() ? reference + "_consensus.fasta" : QStringLiteral("trimmed_reads.fasta");
     m_picker->saveFasta(QUrl::fromLocalFile(QDir(folder).filePath(name)));
 }
 
@@ -159,7 +165,6 @@ void Backend::loadUrls(const QList<QUrl> &urls) {
 // so any mix of files can be opened or dropped at once.
 void Backend::loadPaths(const QStringList &paths) {
     const Layout::Column before = m_cursor < columnCount() ? m_assembly.layout().columns[m_cursor] : Layout::Column{};
-    const bool hadReference = hasReference();
     QStringList problems, notes;
     int traces = 0;
     bool newReference = false;
@@ -211,7 +216,8 @@ void Backend::loadPaths(const QStringList &paths) {
     if (m_selected < 0 && readCount() > 0)
         m_selected = 0;
     emit changed();
-    if (newReference && !hadReference)
+    // A new reference has its own coordinates, so the old position means nothing there.
+    if (newReference)
         cursorToStart();
     else
         keepCursorOn(before);

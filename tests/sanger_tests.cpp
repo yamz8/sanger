@@ -223,6 +223,57 @@ private slots:
         QCOMPARE(assembly.layout().columns[assembly.layout().mismatches[0]].ref, 302);
     }
 
+    void abifCallsAndPeaksComeFromOneSet()
+    {
+        // Edited calls (PBAS 2) without edited peaks can't be placed, so the
+        // basecaller's own calls and peaks are used together.
+        const QByteArray bases = randomSequence(60, 91);
+        const Trace written = traceOf(bases);
+        QString error;
+        const Trace read = TraceFile::parse(Fixtures::abif(written, "S", bases + "ACG"), &error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(read.bases, bases);
+        QCOMPARE(read.peaks, written.peaks);
+        QVERIFY(read.hasQuality);
+    }
+
+    void readsOverhangingALongReferenceAlign()
+    {
+        const QByteArray reference = randomSequence(80'000, 17);
+        const QByteArray read = randomSequence(50, 18) + reference.left(600);
+        Assembly assembly;
+        assembly.setReference({"genome", reference});
+        assembly.addTrace(traceOf(read));
+        assembly.addTrace(traceOf(reference.mid(79'300, 600) + randomSequence(50, 19)));
+        QVERIFY(assembly.reads()[0].aligned());
+        QCOMPARE(assembly.reads()[0].alignment.refOfBase[50], 0);
+        QVERIFY(assembly.reads()[1].aligned());
+        QCOMPARE(assembly.reads()[1].alignment.refOfBase[599], 79'899);
+
+        // The index lookup agrees with the overhang to within a bucket.
+        const ReferenceIndex index(reference);
+        const int start = index.likelyStart(read);
+        QVERIFY2(start <= -50 && start > -50 - 32, qPrintable(QString::number(start)));
+    }
+
+    void leftOutReadsKeepTheirInsertions()
+    {
+        const QByteArray reference = randomSequence(500, 23);
+        QByteArray inserted = reference.mid(50, 300);
+        inserted.insert(150, "TT");
+        Assembly assembly;
+        assembly.setReference({"ref", reference});
+        assembly.addTrace(traceOf(inserted, 40, "inserted"));
+        assembly.addTrace(traceOf(reference.mid(40, 320), 40, "plain"));
+        const int differences = assembly.reads()[0].differences;
+        QCOMPARE(differences, 2);
+        assembly.setIncluded(0, false);
+        QCOMPARE(assembly.reads()[0].differences, differences);
+        QCOMPARE(assembly.layout().rows[0].count('T'), inserted.count('T'));
+        QCOMPARE(assembly.layout().mismatches.size(), 0);
+        QCOMPARE(assembly.consensus(), reference.mid(40, 320));
+    }
+
     void unrelatedReadsDoNotAlign()
     {
         Assembly assembly;
@@ -422,6 +473,58 @@ private slots:
         QFile written(dir.filePath("out.fasta"));
         QVERIFY(written.open(QIODevice::ReadOnly));
         QCOMPARE(written.readAll(), Sequence::formatFasta("solo", bases.mid(10, 180)));
+    }
+
+    void reverseReadsAreNumberedAsSequenced()
+    {
+        // The trim, the cursor, and the command line all count along the read
+        // as it came off the sequencer.
+        QTemporaryDir dir;
+        const QByteArray reference = randomSequence(700, 81);
+        const QByteArray sequenced = Sequence::reverseComplement(reference.mid(100, 400));
+        QVector<int> quality = qualities(400, 40);
+        for (int i = 0; i < 20; ++i)
+            quality[i] = 3; // A poor start, as sequenced.
+        QVERIFY(Fixtures::write(dir.filePath("ref.fa"), ">r\n" + reference + "\n"));
+        QVERIFY(Fixtures::write(dir.filePath("rev.ab1"), Fixtures::abif(Fixtures::synthetic(sequenced, quality))));
+        Backend backend(new FakePicker);
+        backend.loadPaths({dir.filePath("ref.fa"), dir.filePath("rev.ab1")});
+        const QVariantMap read = backend.reads()[0].toMap();
+        QVERIFY(read["reverse"].toBool());
+        QCOMPARE(read["trimStart"].toInt(), 21);
+        QCOMPARE(read["trimEnd"].toInt(), 400);
+        // The first base kept, as sequenced, sits at the right end of the alignment.
+        backend.cursorToEnd();
+        QCOMPARE(backend.cursorBase(), 21);
+    }
+
+    void exportSuggestionStaysInTheFolder()
+    {
+        QTemporaryDir dir;
+        const QByteArray reference = randomSequence(400, 83);
+        QVERIFY(Fixtures::write(dir.filePath("ref.fa"), ">HIV/pol:region\n" + reference + "\n"));
+        QVERIFY(Fixtures::write(dir.filePath("a.ab1"), Fixtures::abif(traceOf(reference.mid(50, 300)))));
+        auto *picker = new FakePicker;
+        Backend backend(picker);
+        backend.loadPaths({dir.filePath("ref.fa"), dir.filePath("a.ab1")});
+        backend.exportFasta();
+        QCOMPARE(picker->lastSuggestion.toLocalFile(), dir.filePath("HIV_pol_region_consensus.fasta"));
+        QVERIFY(QFile::exists(dir.filePath("HIV_pol_region_consensus.fasta")));
+    }
+
+    void aNewReferenceStartsTheCursorOver()
+    {
+        QTemporaryDir dir;
+        const QByteArray first = randomSequence(6000, 85), second = randomSequence(900, 86);
+        QVERIFY(Fixtures::write(dir.filePath("one.fa"), ">one\n" + first + "\n"));
+        QVERIFY(Fixtures::write(dir.filePath("two.fa"), ">two\n" + second + "\n"));
+        QVERIFY(Fixtures::write(dir.filePath("a.ab1"), Fixtures::abif(traceOf(first.mid(4000, 500)))));
+        QVERIFY(Fixtures::write(dir.filePath("b.ab1"), Fixtures::abif(traceOf(second.mid(300, 400)))));
+        Backend backend(new FakePicker);
+        backend.loadPaths({dir.filePath("one.fa"), dir.filePath("a.ab1"), dir.filePath("b.ab1")});
+        QCOMPARE(backend.cursorReference(), 4001);
+        backend.loadPaths({dir.filePath("two.fa")});
+        QCOMPARE(backend.cursorReference(), 301);
     }
 
     void backendSaysWhatItCouldNotOpen()

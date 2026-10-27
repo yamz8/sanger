@@ -3,6 +3,8 @@
 #include "sequence.h"
 #include "trace.h"
 
+#include <memory>
+
 // One loaded trace and what has been decided about it.
 struct Read {
     Trace original;
@@ -19,6 +21,12 @@ struct Read {
     int differences = 0;
 
     bool aligned() const { return alignment.found; }
+    // The trim counted along the read as it was sequenced, one-based and
+    // inclusive, as the cursor's base position and the sequencing report count.
+    TrimRange sequencedTrim() const {
+        const int length = trace.length();
+        return reverse ? TrimRange{length - trim.end + 1, length - trim.start} : TrimRange{trim.start + 1, trim.end};
+    }
     bool manuallyTrimmed() const { return manualStart >= 0; }
 };
 
@@ -55,6 +63,7 @@ bool disagrees(char symbol, char reference);
 class Assembly {
 public:
     static constexpr double DefaultErrorLimit = 0.05;
+    static constexpr double MinimumErrorLimit = 0.0001, MaximumErrorLimit = 0.5;
 
     bool hasReference() const { return !m_reference.sequence.isEmpty(); }
     const Sequence::Record &reference() const { return m_reference; }
@@ -83,7 +92,7 @@ public:
     QByteArray readsFasta() const;
 
 private:
-    void orient(Read &read) const;
+    void orient(Read &read);
     void retrim(Read &read) const;
     void rebuild();
     void rebuildWithoutReference();
@@ -91,5 +100,7 @@ private:
     Sequence::Record m_reference;
     QVector<Read> m_reads;
     double m_errorLimit = DefaultErrorLimit;
+    // Only for references long enough that some read needs it.
+    std::shared_ptr<ReferenceIndex> m_index;
     Layout m_layout;
 };
